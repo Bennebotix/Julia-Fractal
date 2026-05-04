@@ -4,7 +4,7 @@
   "display": "fullscreen",
   "orientation": "any",
   "start_url": "/Julia-Fractal/",
-  "scope": "/",
+  "scope": "/Julia-Fractal/",
   "lang": "en",
   "icons": [
     {
