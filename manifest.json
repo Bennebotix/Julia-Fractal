@@ -3,7 +3,7 @@
   "short_name": "Julia",
   "display": "fullscreen",
   "orientation": "any",
-  "start_url": "/",
+  "start_url": "/Julia-Fractal/",
   "scope": "/",
   "lang": "en",
   "icons": [
