@@ -1,0 +1,16 @@
+{
+  "name": "Julia Fractal",
+  "short_name": "Julia",
+  "display": "fullscreen",
+  "orientation": "any",
+  "start_url": "/",
+  "scope": "/",
+  "lang": "en",
+  "icons": [
+    {
+      "src": "icon.png",
+      "sizes": "612x612",
+      "type": "image/png"
+    }
+  ]
+}
