@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <link rel="manifest" href="manifest.json">
+
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="application-name" content="Julia">
+    <meta name="apple-mobile-web-app-title" content="Julia">
+    <meta name="msapplication-starturl" content="/">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+
+    <link rel="icon" type="image/png" sizes="612x612" href="icon.png">
+    <link rel="apple-touch-icon" type="image/png" sizes="612x612" href="icon.png">
+  
+    <title>Julia Fractal</title>
+    <style>
+        :root { --edit: #ff3232; --view: #ffffff; }
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #000; touch-action: none; }
+        canvas { width: 100vw; height: 100vh; display: block; }
+        #ui { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; font-family: -apple-system, system-ui, sans-serif; }
+        #mode-toggle {
+            position: absolute; bottom: 40px; right: 30px; padding: 18px 34px; border-radius: 50px;
+            background: rgba(0,0,0,0.8); backdrop-filter: blur(20px); color: white;
+            border: 1px solid rgba(255,255,255,0.2); font-weight: 700; pointer-events: auto;
+            transition: all 0.2s ease; cursor: pointer; text-transform: uppercase; letter-spacing: 1.5px; font-size: 13px;
+        }
+        #mode-toggle.edit { border-color: var(--edit); color: var(--edit); box-shadow: 0 0 30px rgba(255, 50, 50, 0.3); }
+        #target-marker {
+            position: absolute; width: 28px; height: 28px; border: 2.5px solid var(--view);
+            border-radius: 50%; transform: translate(-50%, -50%); pointer-events: none;
+            transition: border-color 0.3s, box-shadow 0.3s;
+        }
+        #target-marker.edit { border-color: var(--edit); box-shadow: 0 0 20px rgba(255, 50, 50, 0.5); }
+    </style>
+</head>
+<body>
+    <canvas id="gpuCanvas"></canvas>
+    <div id="ui">
+        <div id="target-marker"></div>
+        <button id="mode-toggle">VIEW</button>
+    </div>
+
+    <script type="module">
+        const canvas = document.getElementById('gpuCanvas');
+        const modeBtn = document.getElementById('mode-toggle');
+        const marker = document.getElementById('target-marker');
+
+        let mode = 'view';
+        let state = {
+            cx: -0.7, cy: 0.27015,
+            viewX: 0, viewY: 0, zoom: 1.0,
+            targetCx: -0.7, targetCy: 0.27015,
+            targetViewX: 0, targetViewY: 0, targetZoom: 1.0,
+            lastPinchDist: 0,
+            lastMid: {x: 0, y: 0}
+        };
+
+        modeBtn.onclick = () => {
+            mode = mode === 'view' ? 'edit' : 'view';
+            modeBtn.innerText = mode.toUpperCase();
+            modeBtn.className = mode === 'edit' ? 'edit' : '';
+            marker.className = mode === 'edit' ? 'edit' : '';
+        };
+
+        const shaderSource = `
+            struct Params {
+                c: vec2<f32>,
+                view_scale: vec2<f32>,
+                view_offset: vec2<f32>,
+                res: vec2<f32>,
+                zoom_depth: f32,
+            };
+            @group(0) @binding(0) var<uniform> p: Params;
+            @group(0) @binding(1) var outTex: texture_storage_2d<rgba8unorm, write>;
+
+            @compute @workgroup_size(8, 8)
+            fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+                let res = p.res;
+                if (f32(id.x) >= res.x || f32(id.y) >= res.y) { return; }
+
+                let uv = (vec2<f32>(id.xy) / res) * 2.0 - 1.0;
+                var zr = uv.x * p.view_scale.x + p.view_offset.x;
+                var zi = -uv.y * p.view_scale.y + p.view_offset.y;
+
+                let cr = p.c.x;
+                let ci = p.c.y;
+
+                let max_i = clamp(128.0 + p.zoom_depth * 40.0, 128.0, 1536.0);
+                var i: f32 = 0.0;
+                var old_zr = zr;
+                var old_zi = zi;
+
+                for (i = 0.0; i < max_i; i += 16.0) {
+                    var zr2 = zr * zr; var zi2 = zi * zi;
+                    if (zr2 + zi2 > 256.0) { break; }
+                    zi = fma(2.0 * zr, zi, ci); zr = zr2 - zi2 + cr;
+
+                    zr2 = zr * zr; zi2 = zi * zi;
+                    if (zr2 + zi2 > 256.0) { i += 1.0; break; }
+                    zi = fma(2.0 * zr, zi, ci); zr = zr2 - zi2 + cr;
+
+                    zr2 = zr * zr; zi2 = zi * zi;
+                    if (zr2 + zi2 > 256.0) { i += 2.0; break; }
+                    zi = fma(2.0 * zr, zi, ci); zr = zr2 - zi2 + cr;
+
+                    zr2 = zr * zr; zi2 = zi * zi;
+                    if (zr2 + zi2 > 256.0) { i += 3.0; break; }
+                    zi = fma(2.0 * zr, zi, ci); zr = zr2 - zi2 + cr;
+
+                    zr2 = zr * zr; zi2 = zi * zi;
+                    if (zr2 + zi2 > 256.0) { i += 4.0; break; }
+                    zi = fma(2.0 * zr, zi, ci); zr = zr2 - zi2 + cr;
+
+                    zr2 = zr * zr; zi2 = zi * zi;
+                    if (zr2 + zi2 > 256.0) { i += 5.0; break; }
+                    zi = fma(2.0 * zr, zi, ci); zr = zr2 - zi2 + cr;
+
+                    zr2 = zr * zr; zi2 = zi * zi;
+                    if (zr2 + zi2 > 256.0) { i += 6.0; break; }
+                    zi = fma(2.0 * zr, zi, ci); zr = zr2 - zi2 + cr;
+
+                    zr2 = zr * zr; zi2 = zi * zi;
+                    if (zr2 + zi2 > 256.0) { i += 7.0; break; }
+                    zi = fma(2.0 * zr, zi, ci); zr = zr2 - zi2 + cr;
+
+                    zr2 = zr * zr; zi2 = zi * zi;
+                    if (zr2 + zi2 > 256.0) { i += 8.0; break; }
+                    zi = fma(2.0 * zr, zi, ci); zr = zr2 - zi2 + cr;
+
+                    zr2 = zr * zr; zi2 = zi * zi;
+                    if (zr2 + zi2 > 256.0) { i += 9.0; break; }
+                    zi = fma(2.0 * zr, zi, ci); zr = zr2 - zi2 + cr;
+
+                    zr2 = zr * zr; zi2 = zi * zi;
+                    if (zr2 + zi2 > 256.0) { i += 10.0; break; }
+                    zi = fma(2.0 * zr, zi, ci); zr = zr2 - zi2 + cr;
+
+                    zr2 = zr * zr; zi2 = zi * zi;
+                    if (zr2 + zi2 > 256.0) { i += 11.0; break; }
+                    zi = fma(2.0 * zr, zi, ci); zr = zr2 - zi2 + cr;
+
+                    zr2 = zr * zr; zi2 = zi * zi;
+                    if (zr2 + zi2 > 256.0) { i += 12.0; break; }
+                    zi = fma(2.0 * zr, zi, ci); zr = zr2 - zi2 + cr;
+
+                    zr2 = zr * zr; zi2 = zi * zi;
+                    if (zr2 + zi2 > 256.0) { i += 13.0; break; }
+                    zi = fma(2.0 * zr, zi, ci); zr = zr2 - zi2 + cr;
+
+                    zr2 = zr * zr; zi2 = zi * zi;
+                    if (zr2 + zi2 > 256.0) { i += 14.0; break; }
+                    zi = fma(2.0 * zr, zi, ci); zr = zr2 - zi2 + cr;
+
+                    zr2 = zr * zr; zi2 = zi * zi;
+                    if (zr2 + zi2 > 256.0) { i += 15.0; break; }
+                    zi = fma(2.0 * zr, zi, ci); zr = zr2 - zi2 + cr;
+
+                    if (abs(zr - old_zr) + abs(zi - old_zi) < 1e-6) {
+                        i = max_i;
+                        break;
+                    }
+                    old_zr = zr;
+                    old_zi = zi;
+                }
+
+                var color: vec4<f32>;
+                if (i >= max_i) {
+                    color = vec4(0.0, 0.0, 0.0, 1.0);
+                } else {
+                    let mag_sq = zr * zr + zi * zi;
+                    let smooth_i = i - log2(log2(mag_sq) * 0.5) + 4.0;
+                    let rgb = 0.5 + 0.5 * cos(3.0 + smooth_i * 0.15 + vec3(0.0, 0.6, 1.2));
+                    color = vec4(rgb, 1.0);
+                }
+                textureStore(outTex, id.xy, color);
+            }
+        `;
+
+        const displayShader = `
+            @group(0) @binding(0) var tex: texture_2d<f32>;
+            @vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
+                var p = array<vec2f, 4>(vec2(-1,1), vec2(1,1), vec2(-1,-1), vec2(1,-1));
+                return vec4f(p[i], 0, 1);
+            }
+            @fragment fn fs(@builtin(position) p: vec4f) -> @location(0) vec4f {
+                return textureLoad(tex, vec2<i32>(p.xy), 0);
+            }
+        `;
+
+        async function init() {
+            if (!navigator.gpu) return;
+            const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+            const device = await adapter.requestDevice();
+            const context = canvas.getContext('webgpu');
+            const format = navigator.gpu.getPreferredCanvasFormat();
+
+            const dpr = Math.min(window.devicePixelRatio, 2);
+            const resize = () => {
+                canvas.width = Math.ceil(window.innerWidth * dpr);
+                canvas.height = Math.ceil(window.innerHeight * dpr);
+            };
+            window.addEventListener('resize', resize);
+            resize();
+
+            context.configure({ device, format, alphaMode: 'opaque' });
+
+            const computeModule = device.createShaderModule({ code: shaderSource });
+            const computePipeline = await device.createComputePipelineAsync({
+                layout: 'auto',
+                compute: { module: computeModule, entryPoint: 'main' }
+            });
+
+            const displayModule = device.createShaderModule({ code: displayShader });
+            const displayPipeline = await device.createRenderPipelineAsync({
+                layout: 'auto',
+                vertex: { module: displayModule, entryPoint: 'vs' },
+                fragment: { module: displayModule, entryPoint: 'fs', targets: [{ format }] },
+                primitive: { topology: 'triangle-strip' }
+            });
+
+            const uBuffer = device.createBuffer({ size: 48, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+            
+            const uniformData = new Float32Array(12);
+
+            let storageTexture = device.createTexture({
+                size: [canvas.width, canvas.height],
+                format: 'rgba8unorm',
+                usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
+            });
+
+            const activePointers = new Map();
+            let lastPos = { x: 0, y: 0 };
+
+            canvas.onpointerdown = e => {
+                activePointers.set(e.pointerId, e);
+                canvas.setPointerCapture(e.pointerId);
+                
+                if (activePointers.size === 1) {
+                    lastPos.x = e.clientX;
+                    lastPos.y = e.clientY;
+                } else if (activePointers.size === 2) {
+                    const it = activePointers.values();
+                    const p1 = it.next().value;
+                    const p2 = it.next().value;
+                    state.lastPinchDist = Math.hypot(p1.clientX - p2.clientX, p1.clientY - p2.clientY);
+                    state.lastMid.x = (p1.clientX + p2.clientX) / 2;
+                    state.lastMid.y = (p1.clientY + p2.clientY) / 2;
+                }
+            };
+
+            window.onpointermove = e => {
+                if (!activePointers.has(e.pointerId)) return;
+                
+                const events = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+                const aspect = window.innerWidth / window.innerHeight;
+
+                for(let ev of events) {
+                    activePointers.set(ev.pointerId, ev);
+                    
+                    if (activePointers.size === 1) {
+                        const dx = (ev.clientX - lastPos.x) / window.innerWidth;
+                        const dy = (ev.clientY - lastPos.y) / window.innerHeight;
+                        const ws = 4.0 / state.targetZoom;
+                        
+                        if (mode === 'view') {
+                            state.targetViewX -= dx * ws * aspect;
+                            state.targetViewY += dy * ws;
+                        } else {
+                            state.targetCx += dx * (2.0 / state.targetZoom);
+                            state.targetCy -= dy * (2.0 / state.targetZoom);
+                        }
+                        lastPos.x = ev.clientX;
+                        lastPos.y = ev.clientY;
+                        
+                    } else if (activePointers.size === 2) {
+                        const it = activePointers.values();
+                        const p1 = it.next().value;
+                        const p2 = it.next().value;
+                        
+                        const currentDist = Math.hypot(p1.clientX - p2.clientX, p1.clientY - p2.clientY);
+                        const midX = (p1.clientX + p2.clientX) / 2;
+                        const midY = (p1.clientY + p2.clientY) / 2;
+
+                        if (state.lastPinchDist > 0) {
+                            const ndcX = (midX / window.innerWidth) * 2 - 1;
+                            const ndcY = -(midY / window.innerHeight) * 2 + 1;
+                            
+                            const prevZoom = state.targetZoom;
+                            state.targetZoom *= currentDist / state.lastPinchDist;
+
+                            if (mode === 'view') {
+                                const panNdcX = (midX - state.lastMid.x) / window.innerWidth * 2.0;
+                                const panNdcY = -(midY - state.lastMid.y) / window.innerHeight * 2.0;
+                                
+                                state.targetViewX -= panNdcX * aspect * (2.0 / prevZoom);
+                                state.targetViewY -= panNdcY * (2.0 / prevZoom);
+
+                                const worldX = state.targetViewX + ndcX * aspect * (2.0 / prevZoom);
+                                const worldY = state.targetViewY + ndcY * (2.0 / prevZoom);
+                                
+                                state.targetViewX = worldX - ndcX * aspect * (2.0 / state.targetZoom);
+                                state.targetViewY = worldY - ndcY * (2.0 / state.targetZoom);
+                            }
+                        }
+                        state.lastPinchDist = currentDist;
+                        state.lastMid.x = midX;
+                        state.lastMid.y = midY;
+                    }
+                }
+            };
+
+            window.onpointerup = window.onpointercancel = e => { 
+                activePointers.delete(e.pointerId);
+                if (activePointers.size < 2) state.lastPinchDist = 0;
+            };
+
+            function frame() {
+                const lerp = 0.3;
+                state.viewX += (state.targetViewX - state.viewX) * lerp;
+                state.viewY += (state.targetViewY - state.viewY) * lerp;
+                state.zoom += (state.targetZoom - state.zoom) * lerp;
+                state.cx += (state.targetCx - state.cx) * lerp;
+                state.cy += (state.targetCy - state.cy) * lerp;
+
+                const aspect = window.innerWidth / window.innerHeight;
+                const mX = ((state.cx - state.viewX) / (2/state.zoom) / aspect * 0.5 + 0.5) * window.innerWidth;
+                const mY = (-(state.cy - state.viewY) / (2/state.zoom) * 0.5 + 0.5) * window.innerHeight;
+                marker.style.left = mX + 'px';
+                marker.style.top = mY + 'px';
+
+                if (storageTexture.width !== canvas.width || storageTexture.height !== canvas.height) {
+                    storageTexture.destroy();
+                    storageTexture = device.createTexture({
+                        size: [canvas.width, canvas.height],
+                        format: 'rgba8unorm',
+                        usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
+                    });
+                }
+
+                uniformData[0] = state.cx;
+                uniformData[1] = state.cy;
+                uniformData[2] = aspect * 2.0 / state.zoom;
+                uniformData[3] = 2.0 / state.zoom;
+                uniformData[4] = state.viewX;
+                uniformData[5] = state.viewY;
+                uniformData[6] = canvas.width;
+                uniformData[7] = canvas.height;
+                uniformData[8] = Math.max(0.0, Math.log2(state.zoom));
+                
+                device.queue.writeBuffer(uBuffer, 0, uniformData);
+
+                const computeBG = device.createBindGroup({
+                    layout: computePipeline.getBindGroupLayout(0),
+                    entries: [
+                        { binding: 0, resource: { buffer: uBuffer } },
+                        { binding: 1, resource: storageTexture.createView() }
+                    ]
+                });
+
+                const displayBG = device.createBindGroup({
+                    layout: displayPipeline.getBindGroupLayout(0),
+                    entries: [{ binding: 0, resource: storageTexture.createView() }]
+                });
+
+                const encoder = device.createCommandEncoder();
+                const computePass = encoder.beginComputePass();
+                computePass.setPipeline(computePipeline);
+                computePass.setBindGroup(0, computeBG);
+                computePass.dispatchWorkgroups(Math.ceil(canvas.width / 8), Math.ceil(canvas.height / 8));
+                computePass.end();
+
+                const renderPass = encoder.beginRenderPass({
+                    colorAttachments: [{
+                        view: context.getCurrentTexture().createView(),
+                        loadOp: 'clear', clearValue: [0,0,0,1], storeOp: 'store'
+                    }]
+                });
+                renderPass.setPipeline(displayPipeline);
+                renderPass.setBindGroup(0, displayBG);
+                renderPass.draw(4);
+                renderPass.end();
+
+                device.queue.submit([encoder.finish()]);
+                requestAnimationFrame(frame);
+            }
+            requestAnimationFrame(frame);
+        }
+        init();
+    </script>
+</body>
+</html>
